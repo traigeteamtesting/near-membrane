@@ -152,9 +152,8 @@ export function assignFilteredGlobalDescriptorsFromPropertyDescriptorMap<
     return descMap;
 }
 
-export function getFilteredGlobalOwnKeys(source: object): (string | symbol)[] {
+export function filterGlobalOwnKeys(ownKeys: (string | symbol)[] = []): (string | symbol)[] {
     const result: (string | symbol)[] = [];
-    const ownKeys = ReflectOwnKeys(source);
     for (let i = 0, { length } = ownKeys; i < length; i += 1) {
         const ownKey = ownKeys[i];
         // Avoid overriding ECMAScript global names that correspond to global
@@ -167,6 +166,11 @@ export function getFilteredGlobalOwnKeys(source: object): (string | symbol)[] {
         }
     }
     return result;
+}
+
+export function getFilteredGlobalOwnKeys(source: object): (string | symbol)[] {
+    const ownKeys = ReflectOwnKeys(source);
+    return filterGlobalOwnKeys(ownKeys);
 }
 
 export function linkIntrinsics(

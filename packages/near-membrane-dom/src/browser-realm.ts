@@ -2,6 +2,7 @@ import {
     assignFilteredGlobalDescriptorsFromPropertyDescriptorMap,
     createConnector,
     createMembraneMarshall,
+    filterGlobalOwnKeys,
     getFilteredGlobalOwnKeys,
     linkIntrinsics,
     DistortionCallback,
@@ -76,6 +77,75 @@ function createDetachableIframe(): HTMLIFrameElement {
     return iframe;
 }
 
+interface BrowserEnvironmentOptions {
+    distortionCallback?: DistortionCallback;
+    endowments?: PropertyDescriptorMap;
+    keepAlive?: boolean;
+    instrumentation?: Instrumentation | undefined;
+}
+
+interface RealmController {
+    cleanup: () => {};
+    evaluator: typeof eval;
+    getGlobalOwnKeys: () => (string | symbol)[];
+    needsExplicitCleanUp: boolean;
+}
+// @ts-ignore: TypeScript doesn't know what a ShadowRealm is yet.
+const { ShadowRealm: ShadowRealmCtor } = globalThis;
+function createRealmController(options: BrowserEnvironmentOptions): RealmController {
+    let cleanup = () => {};
+    let evaluator: typeof eval;
+    let getGlobalOwnKeys: () => (string | symbol)[];
+    let needsExplicitCleanUp = false;
+
+    if (typeof ShadowRealmCtor === 'function') {
+        // @ts-ignore: TypeScript doesn't know what a ShadowRealm is yet.
+        const shadowRealm = new ShadowRealm();
+        evaluator = shadowRealm.evaluate.bind(shadowRealm);
+        const getGlobalThisOwnKeysFromShadowRealm = evaluator(`(callableKeysCallback) => {
+        let ownKeys = Reflect.ownKeys(globalThis);
+        Reflect.apply(callableKeysCallback, undefined, ownKeys);
+        };`);
+        let keys: (string | symbol)[];
+        getGlobalOwnKeys = () => {
+            getGlobalThisOwnKeysFromShadowRealm((...args: (string | symbol)[]) => {
+                keys = args;
+            });
+            return filterWindowKeys(filterGlobalOwnKeys(keys));
+        };
+    } else {
+        const { keepAlive } = options;
+        const iframe = createDetachableIframe();
+        const redWindow = ReflectApply(
+            HTMLIFrameElementProtoContentWindowGetter,
+            iframe,
+            []
+        )!.window;
+        getGlobalOwnKeys = () => filterWindowKeys(getFilteredGlobalOwnKeys(redWindow));
+        const { document: redDocument } = redWindow;
+        cleanup = () => {
+            // Once we get the iframe info ready, and all mapped, we can proceed
+            // to detach the iframe only if the keepAlive option isn't true.
+            if (keepAlive) {
+                // TODO: Temporary hack to preserve the document reference in Firefox.
+                // https://bugzilla.mozilla.org/show_bug.cgi?id=543435
+                ReflectApply(DocumentProtoOpen, redDocument, []);
+                ReflectApply(DocumentProtoClose, redDocument, []);
+            } else {
+                ReflectApply(ElementProtoRemove, iframe, []);
+            }
+        };
+        evaluator = redWindow.eval;
+        needsExplicitCleanUp = true;
+    }
+    return {
+        cleanup,
+        evaluator,
+        getGlobalOwnKeys,
+        needsExplicitCleanUp,
+    } as RealmController;
+}
+
 export default function createVirtualEnvironment(
     globalObjectShape: object | null,
     globalObjectVirtualizationTarget: WindowProxy & typeof globalThis,
@@ -90,22 +160,25 @@ export default function createVirtualEnvironment(
     ) {
         throw new TypeErrorCtor('Missing global object virtualization target.');
     }
+    const options = ObjectAssign(
+        {
+            __proto__: null,
+            keepAlive: false,
+        },
+        providedOptions
+    );
     const {
         distortionCallback,
         endowments,
         instrumentation,
-        keepAlive = false,
+        keepAlive,
         // eslint-disable-next-line prefer-object-spread
-    } = ObjectAssign({ __proto__: null }, providedOptions);
-    const iframe = createDetachableIframe();
-    const {
-        window: redWindow,
-        window: { document: redDocument },
-    } = ReflectApply(HTMLIFrameElementProtoContentWindowGetter, iframe, [])!;
+    } = options;
+    const realmController = createRealmController(options);
     let globalOwnKeys;
     if (globalObjectShape === null) {
         if (defaultGlobalOwnKeys === null) {
-            defaultGlobalOwnKeys = filterWindowKeys(getFilteredGlobalOwnKeys(redWindow));
+            defaultGlobalOwnKeys = realmController.getGlobalOwnKeys();
         }
         globalOwnKeys = defaultGlobalOwnKeys;
     } else {
@@ -117,7 +190,7 @@ export default function createVirtualEnvironment(
     // https://bugs.chromium.org/p/chromium/issues/detail?id=1305302
     const unforgeableGlobalThisKeys = keepAlive ? undefined : unforgeablePoisonedWindowKeys;
     const blueConnector = createHooksCallback;
-    const redConnector = createConnector(redWindow.eval);
+    const redConnector = createConnector(realmController.evaluator);
     // Extract the global references and descriptors before any interference.
     const blueRefs = getCachedGlobalObjectReferences(globalObjectVirtualizationTarget);
     // Create a new environment.
@@ -154,18 +227,8 @@ export default function createVirtualEnvironment(
     // We intentionally skip remapping Window.prototype because there is nothing
     // in it that needs to be remapped.
     env.lazyRemap(blueRefs.EventTargetProto, blueRefs.EventTargetProtoOwnKeys);
-    // We don't remap `blueRefs.WindowPropertiesProto` because it is "magical"
-    // in that it provides access to elements by id.
-    //
-    // Once we get the iframe info ready, and all mapped, we can proceed
-    // to detach the iframe only if the keepAlive option isn't true.
-    if (keepAlive) {
-        // TODO: Temporary hack to preserve the document reference in Firefox.
-        // https://bugzilla.mozilla.org/show_bug.cgi?id=543435
-        ReflectApply(DocumentProtoOpen, redDocument, []);
-        ReflectApply(DocumentProtoClose, redDocument, []);
-    } else {
-        ReflectApply(ElementProtoRemove, iframe, []);
+    if (realmController.needsExplicitCleanUp) {
+        realmController.cleanup();
     }
     return env;
 }
