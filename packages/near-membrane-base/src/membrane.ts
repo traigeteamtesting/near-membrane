@@ -171,14 +171,8 @@ export interface HooksOptions {
 export type Pointer = CallableFunction;
 export type ProxyTarget = CallableFunction | any[] | object;
 
-export const sharedMembraneState = {
-    proxyTargetToLazyPropertyStateMap: new WeakMap(),
-};
 // istanbul ignore next
-export function createMembraneMarshall(
-    isInShadowRealm?: boolean,
-    { proxyTargetToLazyPropertyStateMap } = sharedMembraneState
-) {
+export function createMembraneMarshall(isInShadowRealm?: boolean) {
     /* eslint-disable prefer-object-spread */
     const ArrayCtor = Array;
     const ArrayBufferCtor = ArrayBuffer;
@@ -368,6 +362,8 @@ export function createMembraneMarshall(
         IsObject = 1 << 3,
         Revoked = 1 << 4,
     }
+
+    const proxyTargetToLazyPropertyStateMap = new WeakMap();
 
     function createShadowTarget(
         targetTraits: TargetTraits,
