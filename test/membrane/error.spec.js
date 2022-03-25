@@ -77,7 +77,8 @@ it('[red] unhandled promise rejections with non-error objects and red listener',
     const env = createVirtualEnvironment(window, window, {
         endowments: Object.getOwnPropertyDescriptors({ done }),
     });
-
+    // eslint-disable-next-line no-debugger
+    debugger;
     env.evaluate(`
         const errorObj = { foo: 'bar' }
 

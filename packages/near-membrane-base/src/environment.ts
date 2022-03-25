@@ -51,9 +51,9 @@ export class VirtualEnvironment {
 
     private blueGetSelectedTarget: GetSelectedTarget;
 
-    private blueGetTransferableValue: GetTransferableValue;
+    public blueGetTransferableValue: GetTransferableValue;
 
-    private blueGlobalThisPointer: Pointer;
+    public blueGlobalThisPointer: Pointer;
 
     private redCallableEvaluate: CallableEvaluate;
 
@@ -61,13 +61,13 @@ export class VirtualEnvironment {
 
     private redCallableLinkPointers: CallableLinkPointers;
 
-    private redCallableSetPrototypeOf: CallableSetPrototypeOf;
-
     private redCallableDefineProperties: CallableDefineProperties;
+
+    public redCallableSetPrototypeOf: CallableSetPrototypeOf;
 
     private redCallableInstallLazyDescriptors: CallableInstallLazyDescriptors;
 
-    private redGlobalThisPointer: Pointer;
+    public redGlobalThisPointer: Pointer;
 
     constructor(providedOptions: VirtualEnvironmentOptions) {
         if (providedOptions === undefined) {

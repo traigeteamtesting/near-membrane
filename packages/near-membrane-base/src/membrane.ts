@@ -100,6 +100,7 @@ type CallableDescriptorsCallback = (
     ...descriptorTuples: [...Parameters<CallableDescriptorCallback>]
 ) => void;
 type CallableNonConfigurableDescriptorCallback = CallableDescriptorCallback;
+type PointerOrPrimitive = Pointer | Primitive;
 type Primitive = bigint | boolean | null | number | string | symbol | undefined;
 type SerializedValue = bigint | boolean | number | string | symbol;
 type ShadowTarget = ProxyTarget;
@@ -171,7 +172,6 @@ export interface HooksOptions {
     instrumentation?: Instrumentation;
 }
 export type Pointer = CallableFunction;
-export type PointerOrPrimitive = Pointer | Primitive;
 export type ProxyTarget = CallableFunction | any[] | object;
 
 // istanbul ignore next

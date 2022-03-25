@@ -1,4 +1,4 @@
-import { PropertyKeys } from '@locker/near-membrane-base';
+import { PropertyKeys, SUPPORTS_SHADOW_REALM } from '@locker/near-membrane-base';
 
 const WeakMapCtor = WeakMap;
 const { push: ArrayProtoPush } = Array.prototype;
@@ -14,12 +14,12 @@ const { get: WeakMapProtoGet, set: WeakMapProtoSet } = WeakMapCtor.prototype;
  */
 interface CachedBlueReferencesRecord extends Object {
     document: Document;
-    DocumentProto: object;
+    DocumentProto?: object;
     window: WindowProxy;
     WindowProto: object;
     WindowPropertiesProto: object;
     EventTargetProto: object;
-    EventTargetProtoOwnKeys: PropertyKeys;
+    EventTargetProtoOwnKeys?: PropertyKeys;
 }
 
 const blueGlobalToRecordMap: WeakMap<typeof globalThis, CachedBlueReferencesRecord> =
@@ -71,12 +71,14 @@ export function getCachedGlobalObjectReferences(
     const EventTargetProto = ReflectGetPrototypeOf(WindowPropertiesProto)!;
     record = {
         document,
-        DocumentProto: ReflectGetPrototypeOf(document)!,
+        DocumentProto: SUPPORTS_SHADOW_REALM ? undefined : ReflectGetPrototypeOf(document)!,
         window,
         WindowProto,
         WindowPropertiesProto,
         EventTargetProto,
-        EventTargetProtoOwnKeys: ReflectOwnKeys(EventTargetProto),
+        EventTargetProtoOwnKeys: SUPPORTS_SHADOW_REALM
+            ? undefined
+            : ReflectOwnKeys(EventTargetProto!),
     } as CachedBlueReferencesRecord;
     ReflectApply(WeakMapProtoSet, blueGlobalToRecordMap, [
         globalObjectVirtualizationTarget,

@@ -1,5 +1,7 @@
 import createVirtualEnvironment from '@locker/near-membrane-dom';
 
+const SUPPORTS_SHADOW_REALM = typeof ShadowRealm === 'function';
+
 describe('createVirtualEnvironment', () => {
     describe('with default settings', () => {
         describe('throws when', () => {
@@ -33,7 +35,7 @@ describe('createVirtualEnvironment', () => {
             it('options object has keepAlive: true', () => {
                 const count = window.frames.length;
                 const env = createVirtualEnvironment(window, window, { keepAlive: true });
-                expect(window.frames.length).toBe(count + 1);
+                expect(window.frames.length).toBe(SUPPORTS_SHADOW_REALM ? count : count + 1);
                 expect(() => env.evaluate('')).not.toThrow();
             });
             it('options object has keepAlive: false', () => {
