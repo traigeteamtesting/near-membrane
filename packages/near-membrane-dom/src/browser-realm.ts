@@ -87,7 +87,7 @@ function createDetachableIframe(): HTMLIFrameElement {
     return iframe;
 }
 
-export default function createVirtualEnvironment(
+function createIframeVirtualEnvironment(
     globalObjectShape: object | null,
     globalObjectVirtualizationTarget: WindowProxy & typeof globalThis,
     providedOptions?: BrowserEnvironmentOptions
@@ -110,70 +110,26 @@ export default function createVirtualEnvironment(
     } = ObjectAssign({ __proto__: null }, providedOptions);
 
     const blueConnector = createHooksCallback;
-    let redConnector: typeof createHooksCallback;
 
     let filteredEndowments: PropertyDescriptorMap | undefined;
-    let iframe: HTMLIFrameElement | undefined;
-    let redDocument: Document | undefined;
 
     if (endowments) {
         filteredEndowments = {};
         assignFilteredGlobalDescriptorsFromPropertyDescriptorMap(filteredEndowments, endowments);
         removeWindowDescriptors(filteredEndowments);
     }
-    if (SUPPORTS_SHADOW_REALM) {
-        // If a globalObjectShape has been explicitly specified, reset the
-        // defaultGlobalPropertyDescriptorMap to null. This will ensure that
-        // the provided globalObjectShape is used to re-create the cached
-        // defaultGlobalPropertyDescriptorMap.
-        if (globalObjectShape !== null) {
-            defaultGlobalPropertyDescriptorMap = null;
-        }
-
-        if (defaultGlobalPropertyDescriptorMap === null) {
-            let sourceShapeOrOneTimeWindow = globalObjectShape!;
-            let sourceIsIframe = false;
-            if (globalObjectShape === null) {
-                const oneTimeIframe = createDetachableIframe();
-                sourceShapeOrOneTimeWindow = ReflectApply(
-                    HTMLIFrameElementProtoContentWindowGetter,
-                    oneTimeIframe,
-                    []
-                )!;
-                sourceIsIframe = true;
-            }
-            defaultGlobalOwnKeys = getFilteredGlobalOwnKeys(sourceShapeOrOneTimeWindow);
-            if (sourceIsIframe) {
-                ReflectApply(ElementProtoRemove, sourceShapeOrOneTimeWindow, []);
-            }
-            defaultGlobalPropertyDescriptorMap = {
-                __proto__: null,
-            } as unknown as PropertyDescriptorMap;
-            assignFilteredGlobalDescriptorsFromPropertyDescriptorMap(
-                defaultGlobalPropertyDescriptorMap,
-                ObjectGetOwnPropertyDescriptors(globalObjectVirtualizationTarget)
-            );
-            for (let i = 0, { length } = defaultGlobalOwnKeys; i < length; i += 1) {
-                defaultGlobalOwnKeysRegistry[defaultGlobalOwnKeys[i]] = true;
-            }
-            for (const key in defaultGlobalPropertyDescriptorMap) {
-                if (!(key in defaultGlobalOwnKeysRegistry)) {
-                    delete defaultGlobalPropertyDescriptorMap[key];
-                }
-            }
-        }
-        redConnector = createConnector(
-            ReflectApply(FunctionProtoBind, ShadowRealmProtoEvaluate, [new ShadowRealmCtor()])
-        );
-    } else {
-        iframe = createDetachableIframe();
-        const redWindow = ReflectApply(HTMLIFrameElementProtoContentWindowGetter, iframe, [])!;
-        if (globalObjectShape === null && defaultGlobalOwnKeys === null) {
-            defaultGlobalOwnKeys = filterWindowKeys(getFilteredGlobalOwnKeys(redWindow));
-        }
-        redDocument = redWindow.document;
-        redConnector = createConnector(redWindow.eval);
+    const iframe = createDetachableIframe();
+    const redWindow: Window & typeof globalThis = ReflectApply(
+        HTMLIFrameElementProtoContentWindowGetter,
+        iframe,
+        []
+    )!;
+    if (globalObjectShape === null && defaultGlobalOwnKeys === null) {
+        defaultGlobalOwnKeys = filterWindowKeys(getFilteredGlobalOwnKeys(redWindow));
     }
+    const redDocument = redWindow.document;
+    const redConnector: typeof createHooksCallback = createConnector(redWindow.eval);
+
     // Extract the global references and descriptors before any interference.
     const blueRefs = getCachedGlobalObjectReferences(globalObjectVirtualizationTarget);
     // Create a new environment.
@@ -185,78 +141,152 @@ export default function createVirtualEnvironment(
     });
     linkIntrinsics(env, globalObjectVirtualizationTarget);
 
-    if (SUPPORTS_SHADOW_REALM) {
-        let unsafeBlueDescMap: PropertyDescriptorMap;
-        if (globalObjectVirtualizationTarget === window) {
-            unsafeBlueDescMap = defaultGlobalPropertyDescriptorMap!;
-        } else {
-            unsafeBlueDescMap = { __proto__: null } as unknown as PropertyDescriptorMap;
-            assignFilteredGlobalDescriptorsFromPropertyDescriptorMap(
-                unsafeBlueDescMap,
-                ObjectGetOwnPropertyDescriptors(globalObjectVirtualizationTarget)
-            );
-            for (const key in unsafeBlueDescMap) {
-                if (!(key in defaultGlobalOwnKeysRegistry)) {
-                    delete unsafeBlueDescMap[key];
-                }
-            }
-        }
-        env.link('globalThis');
-        env.redCallableSetPrototypeOf(
-            env.redGlobalThisPointer as Pointer,
-            env.blueGetTransferableValue(blueRefs.WindowProto) as Pointer
-        );
-        env.remap(blueRefs.window, unsafeBlueDescMap);
-        if (endowments) {
-            env.remap(blueRefs.window, filteredEndowments!);
-        }
+    // window
+    // window.document
+    // In browsers globalThis is === window.
+    if (typeof globalThis === 'undefined') {
+        // Support for globalThis was added in Chrome 71.
+        // However, environments like Android emulators are running Chrome 69.
+        env.link('window', 'document');
     } else {
-        // window
-        // window.document
-        // In browsers globalThis is === window.
-        if (typeof globalThis === 'undefined') {
-            // Support for globalThis was added in Chrome 71.
-            // However, environments like Android emulators are running Chrome 69.
-            env.link('window', 'document');
-        } else {
-            // document is === window.document.
-            env.link('document');
-        }
-        // window.__proto__ (aka Window.prototype)
-        // window.__proto__.__proto__ (aka WindowProperties.prototype)
-        // window.__proto__.__proto__.__proto__ (aka EventTarget.prototype)
-        env.link('__proto__', '__proto__', '__proto__');
-        env.remapProto(blueRefs.document, blueRefs.DocumentProto!);
-        env.lazyRemap(
-            blueRefs.window,
-            globalObjectShape === null
-                ? (defaultGlobalOwnKeys as PropertyKeys)
-                : filterWindowKeys(getFilteredGlobalOwnKeys(globalObjectShape)),
-            // Chromium based browsers have a bug that nulls the result of `window`
-            // getters in detached iframes when the property descriptor of `window.window`
-            // is retrieved.
-            // https://bugs.chromium.org/p/chromium/issues/detail?id=1305302
-            keepAlive ? undefined : unforgeablePoisonedWindowKeys
-        );
-        if (endowments) {
-            env.remap(blueRefs.window, filteredEndowments!);
-        }
-        // We intentionally skip remapping Window.prototype because there is nothing
-        // in it that needs to be remapped.
-        env.lazyRemap(blueRefs.EventTargetProto!, blueRefs.EventTargetProtoOwnKeys!);
-        // We don't remap `blueRefs.WindowPropertiesProto` because it is "magical"
-        // in that it provides access to elements by id.
-        //
-        // Once we get the iframe info ready, and all mapped, we can proceed
-        // to detach the iframe only if the keepAlive option isn't true.
-        if (keepAlive) {
-            // TODO: Temporary hack to preserve the document reference in Firefox.
-            // https://bugzilla.mozilla.org/show_bug.cgi?id=543435
-            ReflectApply(DocumentProtoOpen, redDocument, []);
-            ReflectApply(DocumentProtoClose, redDocument, []);
-        } else {
-            ReflectApply(ElementProtoRemove, iframe, []);
-        }
+        // document is === window.document.
+        env.link('document');
+    }
+    // window.__proto__ (aka Window.prototype)
+    // window.__proto__.__proto__ (aka WindowProperties.prototype)
+    // window.__proto__.__proto__.__proto__ (aka EventTarget.prototype)
+    env.link('__proto__', '__proto__', '__proto__');
+    env.remapProto(blueRefs.document, blueRefs.DocumentProto!);
+    env.lazyRemap(
+        blueRefs.window,
+        globalObjectShape === null
+            ? (defaultGlobalOwnKeys as PropertyKeys)
+            : filterWindowKeys(getFilteredGlobalOwnKeys(globalObjectShape)),
+        // Chromium based browsers have a bug that nulls the result of `window`
+        // getters in detached iframes when the property descriptor of `window.window`
+        // is retrieved.
+        // https://bugs.chromium.org/p/chromium/issues/detail?id=1305302
+        keepAlive ? undefined : unforgeablePoisonedWindowKeys
+    );
+    if (endowments) {
+        env.remap(blueRefs.window, filteredEndowments!);
+    }
+    // We intentionally skip remapping Window.prototype because there is nothing
+    // in it that needs to be remapped.
+    env.lazyRemap(blueRefs.EventTargetProto!, blueRefs.EventTargetProtoOwnKeys!);
+    // We don't remap `blueRefs.WindowPropertiesProto` because it is "magical"
+    // in that it provides access to elements by id.
+    //
+    // Once we get the iframe info ready, and all mapped, we can proceed
+    // to detach the iframe only if the keepAlive option isn't true.
+    if (keepAlive) {
+        // TODO: Temporary hack to preserve the document reference in Firefox.
+        // https://bugzilla.mozilla.org/show_bug.cgi?id=543435
+        ReflectApply(DocumentProtoOpen, redDocument, []);
+        ReflectApply(DocumentProtoClose, redDocument, []);
+    } else {
+        ReflectApply(ElementProtoRemove, iframe, []);
     }
     return env;
 }
+
+function createShadowRealmVirtualEnvironment(
+    globalObjectShape: object | null,
+    globalObjectVirtualizationTarget: WindowProxy & typeof globalThis,
+    providedOptions?: BrowserEnvironmentOptions
+): VirtualEnvironment {
+    if (typeof globalObjectShape !== 'object') {
+        throw new TypeErrorCtor('Missing global object shape.');
+    }
+    if (
+        typeof globalObjectVirtualizationTarget !== 'object' ||
+        globalObjectVirtualizationTarget === null
+    ) {
+        throw new TypeErrorCtor('Missing global object virtualization target.');
+    }
+    const {
+        distortionCallback,
+        endowments,
+        instrumentation,
+        // eslint-disable-next-line prefer-object-spread
+    } = ObjectAssign({ __proto__: null }, providedOptions);
+
+    const blueConnector = createHooksCallback;
+
+    let filteredEndowments: PropertyDescriptorMap | undefined;
+
+    if (endowments) {
+        filteredEndowments = {};
+        assignFilteredGlobalDescriptorsFromPropertyDescriptorMap(filteredEndowments, endowments);
+        removeWindowDescriptors(filteredEndowments);
+    }
+    if (defaultGlobalPropertyDescriptorMap === null) {
+        const oneTimeIframe = createDetachableIframe();
+        const oneTimeWindow = ReflectApply(
+            HTMLIFrameElementProtoContentWindowGetter,
+            oneTimeIframe,
+            []
+        )!;
+        defaultGlobalOwnKeys = getFilteredGlobalOwnKeys(oneTimeWindow);
+        ReflectApply(ElementProtoRemove, oneTimeIframe, []);
+        defaultGlobalPropertyDescriptorMap = {
+            __proto__: null,
+        } as unknown as PropertyDescriptorMap;
+        assignFilteredGlobalDescriptorsFromPropertyDescriptorMap(
+            defaultGlobalPropertyDescriptorMap,
+            ObjectGetOwnPropertyDescriptors(window)
+        );
+        for (let i = 0, { length } = defaultGlobalOwnKeys; i < length; i += 1) {
+            defaultGlobalOwnKeysRegistry[defaultGlobalOwnKeys[i]] = true;
+        }
+        for (const key in defaultGlobalPropertyDescriptorMap) {
+            if (!(key in defaultGlobalOwnKeysRegistry)) {
+                delete defaultGlobalPropertyDescriptorMap[key];
+            }
+        }
+    }
+    const redConnector = createConnector(
+        ReflectApply(FunctionProtoBind, ShadowRealmProtoEvaluate, [new ShadowRealmCtor()])
+    );
+
+    // Extract the global references and descriptors before any interference.
+    const blueRefs = getCachedGlobalObjectReferences(globalObjectVirtualizationTarget);
+    // Create a new environment.
+    const env = new VirtualEnvironment({
+        blueConnector,
+        distortionCallback,
+        redConnector,
+        instrumentation,
+    });
+    linkIntrinsics(env, globalObjectVirtualizationTarget);
+
+    let unsafeBlueDescMap: PropertyDescriptorMap;
+    if (globalObjectVirtualizationTarget === window) {
+        unsafeBlueDescMap = defaultGlobalPropertyDescriptorMap!;
+    } else {
+        unsafeBlueDescMap = { __proto__: null } as unknown as PropertyDescriptorMap;
+        assignFilteredGlobalDescriptorsFromPropertyDescriptorMap(
+            unsafeBlueDescMap,
+            ObjectGetOwnPropertyDescriptors(globalObjectVirtualizationTarget)
+        );
+        for (const key in unsafeBlueDescMap) {
+            if (!(key in defaultGlobalOwnKeysRegistry)) {
+                delete unsafeBlueDescMap[key];
+            }
+        }
+    }
+    env.link('globalThis');
+    env.redCallableSetPrototypeOf(
+        env.redGlobalThisPointer as Pointer,
+        env.blueGetTransferableValue(blueRefs.WindowProto) as Pointer
+    );
+    env.remap(blueRefs.window, unsafeBlueDescMap);
+    if (endowments) {
+        env.remap(blueRefs.window, filteredEndowments!);
+    }
+    return env;
+}
+
+export default SUPPORTS_SHADOW_REALM
+    ? createShadowRealmVirtualEnvironment
+    : createIframeVirtualEnvironment;
