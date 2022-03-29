@@ -122,21 +122,36 @@ export default function createVirtualEnvironment(
         removeWindowDescriptors(filteredEndowments);
     }
     if (SUPPORTS_SHADOW_REALM) {
+        // If a globalObjectShape has been explicitly specified, reset the
+        // defaultGlobalPropertyDescriptorMap to null. This will ensure that
+        // the provided globalObjectShape is used to re-create the cached
+        // defaultGlobalPropertyDescriptorMap.
+        if (globalObjectShape !== null) {
+            defaultGlobalPropertyDescriptorMap = null;
+        }
+
         if (defaultGlobalPropertyDescriptorMap === null) {
-            const oneTimeIframe = createDetachableIframe();
-            const oneTimeWindow = ReflectApply(
-                HTMLIFrameElementProtoContentWindowGetter,
-                oneTimeIframe,
-                []
-            )!;
-            defaultGlobalOwnKeys = getFilteredGlobalOwnKeys(oneTimeWindow);
-            ReflectApply(ElementProtoRemove, oneTimeIframe, []);
+            let sourceShapeOrOneTimeWindow = globalObjectShape!;
+            let sourceIsIframe = false;
+            if (globalObjectShape === null) {
+                const oneTimeIframe = createDetachableIframe();
+                sourceShapeOrOneTimeWindow = ReflectApply(
+                    HTMLIFrameElementProtoContentWindowGetter,
+                    oneTimeIframe,
+                    []
+                )!;
+                sourceIsIframe = true;
+            }
+            defaultGlobalOwnKeys = getFilteredGlobalOwnKeys(sourceShapeOrOneTimeWindow);
+            if (sourceIsIframe) {
+                ReflectApply(ElementProtoRemove, sourceShapeOrOneTimeWindow, []);
+            }
             defaultGlobalPropertyDescriptorMap = {
                 __proto__: null,
             } as unknown as PropertyDescriptorMap;
             assignFilteredGlobalDescriptorsFromPropertyDescriptorMap(
                 defaultGlobalPropertyDescriptorMap,
-                ObjectGetOwnPropertyDescriptors(window)
+                ObjectGetOwnPropertyDescriptors(globalObjectVirtualizationTarget)
             );
             for (let i = 0, { length } = defaultGlobalOwnKeys; i < length; i += 1) {
                 defaultGlobalOwnKeysRegistry[defaultGlobalOwnKeys[i]] = true;
