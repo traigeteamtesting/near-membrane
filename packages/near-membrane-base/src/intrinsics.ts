@@ -5,6 +5,9 @@ const { includes: ArrayProtoIncludes } = Array.prototype;
 const { assign: ObjectAssign } = Object;
 const { apply: ReflectApply, ownKeys: ReflectOwnKeys } = Reflect;
 
+// @ts-ignore: Prevent cannot find name 'ShadowRealm' error.
+export const SUPPORTS_SHADOW_REALM = typeof ShadowRealm === 'function';
+
 /**
  * This list must be in sync with ecma-262, anything new added to the global object
  * should be considered, to decide whether or not they need remapping. The default
